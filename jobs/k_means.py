@@ -8,16 +8,38 @@ import numpy as np
 import cx_Oracle
 import os
 import csv
+from sqlalchemy import create_engine
+from sqlalchemy.types import NVARCHAR
+from sqlalchemy import inspect
+import traceback
+
 
 os.environ['NLS_LANG'] = 'SIMPLIFIED CHINESE_CHINA.UTF8'
 
+def engine():
+    engine = create_engine('oracle://dec:dec@192.168.100.104:1521/pvdb',encoding='utf-8', echo=True)
+    return engine
+
+
+#定义通用方法函数，插入数据库表。
+def insert_db(data, table_name):
+    
+    data.to_sql(name=table_name, con=engine, if_exists='append', index = False)
+
+
 ##yc_power_sample 用采功率数据的获取          
-def get_data():
+def get_data(data1, data2, home_no):
+
+    data1 = '\''+ data1 + '\''
+    data2 = '\''+ data2 + '\''
+    home_no = '\''+ home_no + '\''
+
     
     #连接数据库后获取数据
     conn = cx_Oracle.connect('dec','dec','192.168.100.104/pvdb')
     cr = conn.cursor()
-    sql = 'select * from YC_POWER_SAMPLE'
+    
+    sql = 'select * from YC_POWER_SAMPLE where DATA_DATE between ' + data1 + ' and ' + data2 + ' and CONS_NO = ' + home_no
     yc_power_data = pd.read_sql(sql, conn)
     
     yc_power_data = yc_power_data[ (yc_power_data['P1'] > 0) & (yc_power_data['P80'] > 0)]
@@ -32,10 +54,14 @@ def get_data():
     yc_power_data.index.name = 'ID'
     yc_power_data.to_csv('yc_power_data.csv')
 
-                                  
+    sql = 'select * from mode_ele_stat_day '
+    mode_data = pd.read_sql(sql, conn)
+    mode_data.to_csv('modedata.csv',index = None)
+                              
     
 
 def K_means():
+    
     iteration = 500 #聚类最大循环次数
     data = pd.read_csv('yc_power_data.csv',index_col = 'ID') #读取数据
 
@@ -71,39 +97,33 @@ def K_means():
 
     data_no1 = pd.read_csv('data_no.csv', index_col = 'ID')
     
-    ##简单打印结果
-    r1 = pd.Series(model.labels_).value_counts() #统计各个类别的数目
+    
+    mode_data = pd.read_csv('modedata.csv')
+    
+    r1 = []
+    for i in range(1,k+1):
+        r1.append(i)
+    r1 = pd.Series(r1)
+    
     r2 = pd.DataFrame(model.cluster_centers_) #找出聚类中心
-    r = pd.concat([r2, r1], axis = 1) #横向连接（0是纵向），得到聚类中心对应的类别下的数目
-    r.columns = list(data_zs.columns) + [u'类别数目'] #重命名表头
-    r.to_csv('k_means_result.csv')
+    r3 = (data_no1[0:k]).T[0:1].T
+    r = pd.concat([r1,r3,r2], axis = 1)
+    r.columns =  mode_data.columns[0:98]
+    r.to_csv('result.csv',index = None )
+
 
     
-    ##详细输出原始数据及其类别
-    r = pd.concat([data_no1,data_zs, pd.Series(model.labels_, index = data_zs.index)], axis = 1)  #详细输出每个样本对应的类别
-    r.columns = list(data_no1.columns) + list(data_zs.columns) + [u'聚类类别'] #重命名表头
-    r.to_csv('yc_power_data_result.csv',index = None) #保存结果
-    
-def data_to_oracle():
-    conn = cx_Oracle.connect('dec','dec','192.168.100.104/pvdb')
-    cr = conn.cursor()
-
-    file_name = 'yc_power_data_result.csv'
-    f = open(file_name)
-    csv_reader = csv.reader(f)
-
-    for row_data in csv_reader:
-        if row_data:
-            values = tuple(row_data)
-            sql_insert="insert into  YC_POWER_SAMPLE (CONS_NO,meter_code) values ('%s','%s')" %(value[0].strip(),value[1].strip())
-            cr.execute(sql_insert)
-    f.close()
+   
     
 
 # main 函数入口
 if __name__ == '__main__':
-    get_data()
+    get_data('2017/11/20', '2017/11/26', '6623660203')
     K_means()
+    data1 = pd.read_csv("result.csv",index_col = None,encoding = 'gbk')
+    data1 = data1[2:3]
+    engine = engine()
+    insert_db(data1, 'mode_ele_stat_day')
     print('completed!')
 
 
